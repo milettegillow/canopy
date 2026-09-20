@@ -4,7 +4,7 @@
 // Wikipedia supplies a photograph. A detection that fails iNaturalist is dropped;
 // a detection without a photograph survives.
 
-export const MODEL = 'gemini-2.5-flash'
+export const MODEL = 'gemini-3.6-flash'
 
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
 const INAT_URL = 'https://api.inaturalist.org/v1/taxa'
@@ -147,10 +147,12 @@ async function askGemini(audioBase64, mimeType) {
     console.error(`Gemini returned ${response.status} ${response.statusText}. Full body:\n${raw}`)
     const err = new Error(`Gemini ${response.status}`)
     err.status = response.status === 429 ? 429 : 502
+    // Never phrase a failed request as a judgement about the recording — that is
+    // the nothing-found state's job, and the two must not be confusable.
     err.clientMessage =
       response.status === 429
         ? 'The listener is busy right now.'
-        : 'The listener could not make sense of that clip.'
+        : 'The listener could not be reached.'
     throw err
   }
 
@@ -171,8 +173,14 @@ async function askGemini(audioBase64, mimeType) {
     .join('')
 
   if (!text.trim()) {
-    console.error('Gemini returned no text. Full body:\n', JSON.stringify(payload))
-    return []
+    // A clip with nothing in it comes back as a valid empty array, so empty text
+    // means the response was truncated or blocked, not that the forest was quiet.
+    const finish = payload?.candidates?.[0]?.finishReason
+    console.error(`Gemini returned no text (finishReason: ${finish}). Full body:\n`, JSON.stringify(payload))
+    const err = new Error('empty candidate')
+    err.status = 502
+    err.clientMessage = 'The listener returned nothing.'
+    throw err
   }
 
   let parsed

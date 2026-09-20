@@ -174,8 +174,7 @@ async function handle(blob) {
   show('thinking')
   try {
     const wav = await toWav(blob)
-    const payload = await identify(wav)
-    render(payload.detections || [])
+    render(await identify(wav))
   } catch (err) {
     console.error(err)
     toError(err.message)
@@ -366,7 +365,16 @@ async function identify(wav) {
   }
 
   if (!response.ok) throw new Error(payload?.error || "That didn't go through.")
-  return payload || { detections: [] }
+
+  // Only a 200 carrying a real array may go on to the nothing-found state. A broken
+  // body is a failed request, and saying "nothing could be identified" would be a
+  // claim about the recording that nothing here supports.
+  if (!Array.isArray(payload?.detections)) {
+    console.error('A 200 response had no detections array:', payload)
+    throw new Error("That didn't go through.")
+  }
+
+  return payload.detections
 }
 
 // --- results -------------------------------------------------------------
