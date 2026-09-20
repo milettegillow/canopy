@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>canopy</title>
+<meta name="theme-color" content="#062314">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="canopy">
+<meta name="description" content="Record rainforest sound, and find out what is in it.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='88'%3E%F0%9F%90%B8%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23062314'/%3E%3Ctext y='.86em' x='6' font-size='76'%3E%F0%9F%90%B8%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Karla:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="foliage" aria-hidden="true">
+  <img class="frond frond-vine-top" src="public/foliage/vine-1.webp" alt="" decoding="async">
+  <img class="frond frond-monstera-right" src="public/foliage/leaf-3.webp" alt="" decoding="async">
+  <img class="frond frond-monstera-left" src="public/foliage/leaf-1.webp" alt="" decoding="async">
+  <img class="frond frond-banana" src="public/foliage/leaf-2.webp" alt="" decoding="async">
+  <img class="frond frond-palm" src="public/foliage/leaf-4.webp" alt="" decoding="async">
+  <img class="frond frond-vine-bottom" src="public/foliage/vine-2.webp" alt="" decoding="async">
+  <div class="scrim"></div>
+</div>
+
+<div class="shell">
+
+  <header class="masthead">
+    <span class="wordmark">canopy</span>
+    <span class="place">Sarapiquí</span>
+  </header>
+
+  <main class="main">
+
+    <!-- idle + listening: one stage, so nothing moves between them -->
+    <section class="stage" id="stage">
+      <button class="orb" id="orb" type="button" aria-label="Tap to listen">
+        <span class="orb-bars" id="orbBars" aria-hidden="true"></span>
+        <span class="orb-stop" aria-hidden="true"></span>
+      </button>
+
+      <div class="stage-foot">
+        <p class="orb-label" id="orbLabel">Tap to listen</p>
+        <div class="meter" id="meter" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <section class="panel-state" id="thinking" hidden>
+      <p class="calm-line">Working out what that was.</p>
+    </section>
+
+    <section class="results" id="results" hidden>
+      <h1 class="results-heading" id="resultsHeading"></h1>
+      <div class="cards" id="cards"></div>
+      <button class="again" id="againResults" type="button">Listen again</button>
+    </section>
+
+    <section class="panel-state" id="empty" hidden>
+      <p class="calm-line">Nothing in that clip could be identified.</p>
+      <button class="again" id="againEmpty" type="button">Listen again</button>
+    </section>
+
+    <section class="panel-state" id="failure" hidden>
+      <p class="calm-line" id="failureLine">That didn't go through.</p>
+      <button class="again" id="againError" type="button">Try again</button>
+    </section>
+
+  </main>
+
+  <footer class="footpath">
+    <button class="upload-link" id="uploadLink" type="button">Upload a clip</button>
+    <input class="file-input" id="fileInput" type="file" accept="audio/*">
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

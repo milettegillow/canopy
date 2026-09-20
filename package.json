@@ -1,0 +1,13 @@
+{
+  "name": "canopy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Record rainforest sound, identify what is in it.",
+  "type": "module",
+  "scripts": {
+    "optimise-images": "node scripts/optimise-images.js"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.2"
+  }
+}
