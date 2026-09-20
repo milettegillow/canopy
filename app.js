@@ -1,7 +1,8 @@
 // canopy — record a clip, convert it to WAV, ask the server what is in it.
 
 const MAX_SECONDS = 15
-const TARGET_RATE = 16000
+const PEAK_TARGET = 0.95
+const SILENCE_FLOOR = 0.001
 const ORB_BAR_HEIGHTS = [34, 70, 100, 52, 100, 70, 34]
 const METER_BARS = 15
 const NUMBERS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve']
@@ -102,13 +103,17 @@ async function start() {
   starting = true
   el.orb.disabled = true
   try {
-    // Echo cancellation, noise suppression and gain control are tuned for speech
-    // and will gate out quiet insects and distant calls. Ask for the raw input.
+    // Noise suppression is built to remove exactly what a cricket chorus is: a
+    // constant broadband wall. With it on, the loudest thing in the forest never
+    // reaches the recording. All five of these are hints the browser may ignore,
+    // so nothing downstream assumes it got them.
     stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
+        channelCount: 1,
+        sampleRate: 48000,
       },
     })
   } catch (err) {
@@ -119,6 +124,9 @@ async function start() {
     starting = false
     el.orb.disabled = false
   }
+
+  const granted = stream.getAudioTracks()[0]?.getSettings?.() || {}
+  console.log('Microphone settings granted:', granted)
 
   const ctx = context()
   analyser = ctx.createAnalyser()
@@ -241,10 +249,36 @@ async function toWav(blob) {
   const mono = downmix(decoded)
   // Longer than the cap? Take the first fifteen seconds rather than refuse it.
   const capped = mono.subarray(0, Math.min(mono.length, Math.floor(decoded.sampleRate * MAX_SECONDS)))
-  const samples = resample(capped, decoded.sampleRate, TARGET_RATE)
 
-  if (!samples.length) throw new Error('That clip had no audio in it.')
-  return encodeWav(samples, TARGET_RATE)
+  if (!capped.length) throw new Error('That clip had no audio in it.')
+
+  // No resampling. Downsampling to 16 kHz threw away everything above 8 kHz,
+  // which is where most neotropical crickets and katydids actually sing.
+  // decodeAudioData has already given us the context's own rate; use that.
+  const samples = normalise(capped)
+  return encodeWav(samples, decoded.sampleRate)
+}
+
+// Lift the clip so its loudest moment sits near full scale. This is a single
+// gain factor applied to every sample — not compression, and nothing per-band.
+function normalise(samples) {
+  let peak = 0
+  for (let i = 0; i < samples.length; i++) {
+    const level = Math.abs(samples[i])
+    if (level > peak) peak = level
+  }
+
+  // Already loud enough, or silent enough that scaling would only raise the noise.
+  if (peak >= PEAK_TARGET || peak < SILENCE_FLOOR) {
+    console.log(`Peak ${peak.toFixed(4)} — left as recorded.`)
+    return samples
+  }
+
+  const gain = PEAK_TARGET / peak
+  const lifted = new Float32Array(samples.length)
+  for (let i = 0; i < samples.length; i++) lifted[i] = samples[i] * gain
+  console.log(`Peak ${peak.toFixed(4)} lifted to ${PEAK_TARGET} (x${gain.toFixed(2)}).`)
+  return lifted
 }
 
 // Safari has had both the promise and the callback form; accept either.
@@ -264,38 +298,6 @@ function downmix(buffer) {
     for (let i = 0; i < channel.length; i++) out[i] += channel[i]
   }
   for (let i = 0; i < out.length; i++) out[i] /= buffer.numberOfChannels
-  return out
-}
-
-function resample(input, from, to) {
-  if (from === to) return Float32Array.from(input)
-
-  const ratio = from / to
-
-  if (ratio < 1) {
-    // Upsampling: interpolate between neighbours.
-    const length = Math.floor(input.length / ratio)
-    const out = new Float32Array(length)
-    for (let i = 0; i < length; i++) {
-      const position = i * ratio
-      const low = Math.floor(position)
-      const high = Math.min(input.length - 1, low + 1)
-      const fraction = position - low
-      out[i] = input[low] * (1 - fraction) + input[high] * fraction
-    }
-    return out
-  }
-
-  // Downsampling: average each window, which also takes the edge off aliasing.
-  const length = Math.floor(input.length / ratio)
-  const out = new Float32Array(length)
-  for (let i = 0; i < length; i++) {
-    const start = Math.floor(i * ratio)
-    const end = Math.min(input.length, Math.floor((i + 1) * ratio))
-    let sum = 0
-    for (let j = start; j < end; j++) sum += input[j]
-    out[i] = end > start ? sum / (end - start) : 0
-  }
   return out
 }
 
