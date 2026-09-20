@@ -137,10 +137,6 @@ a { color: var(--cream); }
 }
 
 .masthead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
   padding: 0.35rem 0 0;
 }
 
@@ -150,13 +146,6 @@ a { color: var(--cream); }
   font-size: 1.6rem;
   letter-spacing: -0.01em;
   color: var(--cream);
-}
-
-.place {
-  font-family: Fraunces, Georgia, serif;
-  font-weight: 600;
-  font-size: 1.05rem;
-  color: var(--sage);
 }
 
 .main {
@@ -337,7 +326,7 @@ a { color: var(--cream); }
   min-height: 48px;
   padding: 0.7rem 1.6rem;
   border: 2px solid var(--cream);
-  border-radius: 999px;
+  border-radius: 6px;
   background: none;
   color: var(--cream);
   font-family: Fraunces, Georgia, serif;
@@ -381,7 +370,7 @@ a { color: var(--cream); }
 .card {
   background: var(--panel);
   border: 1px solid var(--edge);
-  border-radius: 18px;
+  border-radius: 6px;
   padding: 1.35rem;
   -webkit-backdrop-filter: blur(7px);
   backdrop-filter: blur(7px);
@@ -412,21 +401,33 @@ a { color: var(--cream); }
 .pill {
   padding: 0.35rem 0.8rem;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 4px;
   font-weight: 500;
   font-size: 0.95rem;
   line-height: 1.3;
 }
 
+/* Blue morpho: not one blue but a sheen that shifts with the angle. The gradient
+   is three times the width of the pill, so only part of it shows at a time and the
+   colour appears to travel across the tab rather than cycle through it. */
 .pill-confident {
-  background: var(--yellow);
-  border-color: var(--yellow);
-  color: #1B2708;
+  border-color: transparent;
+  color: var(--cream);
+  background-image: linear-gradient(110deg, #101C6B, #1B6CA8, #2FD3E8, #5B3FD6, #101C6B);
+  background-size: 300% 100%;
+  background-position: 0% 50%;
+  box-shadow: inset 0 1px 0 rgba(246, 238, 220, 0.38);
+  animation: morpho 6s ease-in-out infinite alternate;
+}
+
+@keyframes morpho {
+  from { background-position: 0% 50%; }
+  to { background-position: 100% 50%; }
 }
 
 .pill-likely {
-  border-color: var(--yellow);
-  color: var(--yellow);
+  border-color: #2FD3E8;
+  color: #2FD3E8;
 }
 
 .pill-possible {
@@ -455,7 +456,7 @@ a { color: var(--cream); }
   display: block;
   padding: 10px 10px 30px;
   background: var(--cream);
-  border-radius: 2px;
+  border-radius: 0;
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.5), 0 3px 8px rgba(0, 0, 0, 0.4);
   transform: rotate(var(--tilt, -1.5deg));
 }
@@ -540,6 +541,11 @@ a { color: var(--cream); }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0.01ms !important; }
+
+  .pill-confident {
+    animation: none;
+    background-position: 50% 50%;
+  }
 }
 
 .footpath.is-hidden { visibility: hidden; }
