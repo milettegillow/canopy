@@ -11,6 +11,12 @@ const INAT_URL = 'https://api.inaturalist.org/v1/taxa'
 const WIKI_URL = 'https://en.wikipedia.org/api/rest_v1/page/summary'
 
 const GEMINI_TIMEOUT_MS = 45000
+const GEMINI_ATTEMPTS = 5
+const GEMINI_BACKOFF_MS = [1000, 2000, 4000, 8000]
+// maxDuration is 60s. Reserve the tail for the iNaturalist and Wikipedia lookups
+// and the response itself, so a retry is never cut off mid-flight by the platform.
+const GEMINI_PHASE_BUDGET_MS = 48000
+const MIN_ATTEMPT_MS = 4000
 const LOOKUP_TIMEOUT_MS = 8000
 const MAX_AUDIO_BASE64_BYTES = 12 * 1024 * 1024
 const IMAGE_WIDTH = 800
@@ -35,7 +41,15 @@ const PROMPT = [
   'continuous and undifferentiated.',
   'For a river or stream, use "running water" as the commonName, with category "weather".',
   'Give a scientific name only when you are identifying a specific species; otherwise leave it empty.',
-  'Do not pad the list with guesses — if you cannot tell, return fewer detections, or none at all.',
+  'When you can hear an animal but cannot identify the species, still report it at the level you are',
+  'sure of — "unidentified cricket", "a frog", "an unseen bird" — with an empty scientificName and',
+  'confidence "possible". A partial identification is useful; silence is not.',
+  'A rainforest recording almost always contains several overlapping sources at very different',
+  'volumes — a river, wind or heavy insect chorus will dominate, but quieter sounds continue',
+  'underneath it and matter just as much. Listen past the loudest sound and report what else is',
+  'present. It is expected and normal to return four to eight detections from a single clip.',
+  'Only omit something if you genuinely cannot hear it — not because it is faint, and not because',
+  'you are unsure what species it is.',
   'Order the detections by how prominent they are in the recording.',
 ].join(' ')
 
@@ -56,8 +70,8 @@ const RESPONSE_SCHEMA = {
   },
 }
 
-// Categories that are not organisms and so cannot be checked against iNaturalist.
-const UNCHECKED_CATEGORIES = new Set(['weather', 'human', 'unknown'])
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
+const BUSY_STATUSES = new Set([429, 503])
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -127,50 +141,110 @@ export default async function handler(req, res) {
 
 // --- A. Gemini -------------------------------------------------------------
 
+// Five attempts over 1s, 2s, 4s and 8s of backoff plus jitter, bounded by the
+// function's own deadline: better to answer "busy" than to be killed mid-retry.
 async function askGemini(audioBase64, mimeType) {
-  const response = await fetchWithTimeout(
-    GEMINI_URL,
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-goog-api-key': process.env.GEMINI_API_KEY,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: PROMPT },
-              { inline_data: { mime_type: mimeType, data: audioBase64 } },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          response_mime_type: 'application/json',
-          response_schema: RESPONSE_SCHEMA,
+  const deadline = Date.now() + GEMINI_PHASE_BUDGET_MS
+  let last
+
+  for (let attempt = 1; attempt <= GEMINI_ATTEMPTS; attempt++) {
+    const remaining = deadline - Date.now()
+    if (remaining < MIN_ATTEMPT_MS) {
+      console.error(`Out of time after ${attempt - 1} attempt(s); not starting another.`)
+      break
+    }
+
+    try {
+      return await callGemini(audioBase64, mimeType, Math.min(GEMINI_TIMEOUT_MS, remaining))
+    } catch (err) {
+      last = err
+      if (!err.retryable || attempt === GEMINI_ATTEMPTS) throw err
+
+      const base = GEMINI_BACKOFF_MS[attempt - 1]
+      const delay = Math.round(base + Math.random() * base * 0.25)
+      if (Date.now() + delay + MIN_ATTEMPT_MS > deadline) {
+        console.error(`Attempt ${attempt} failed (${err.message}); no budget left to retry.`)
+        throw err
+      }
+
+      console.error(`Attempt ${attempt} of ${GEMINI_ATTEMPTS} failed (${err.message}); retrying in ${delay}ms.`)
+      await sleep(delay)
+    }
+  }
+
+  throw last || Object.assign(new Error('Gemini unreachable'), {
+    status: 503,
+    retryable: true,
+    clientMessage: 'The listener is busy right now.',
+  })
+}
+
+async function callGemini(audioBase64, mimeType, timeoutMs) {
+  let response
+  try {
+    response = await fetchWithTimeout(
+      GEMINI_URL,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-goog-api-key': process.env.GEMINI_API_KEY,
         },
-      }),
-    },
-    GEMINI_TIMEOUT_MS,
-  )
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: PROMPT },
+                { inline_data: { mime_type: mimeType, data: audioBase64 } },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            response_mime_type: 'application/json',
+            response_schema: RESPONSE_SCHEMA,
+          },
+        }),
+      },
+      timeoutMs,
+    )
+  } catch (cause) {
+    // A timeout or a dropped connection is worth another go.
+    const err = new Error(cause.name === 'AbortError' ? 'request timed out' : 'network error')
+    err.status = 502
+    err.retryable = true
+    err.clientMessage = 'The listener could not be reached.'
+    throw err
+  }
 
   if (!response.ok) {
     const raw = await response.text()
     console.error(`Gemini returned ${response.status} ${response.statusText}. Full body:\n${raw}`)
     const err = new Error(`Gemini ${response.status}`)
-    err.status = response.status === 429 ? 429 : 502
+    const busy = BUSY_STATUSES.has(response.status)
+    err.status = busy ? response.status : 502
+    err.retryable = RETRYABLE_STATUSES.has(response.status)
     // Never phrase a failed request as a judgement about the recording — that is
     // the nothing-found state's job, and the two must not be confusable.
-    err.clientMessage =
-      response.status === 429
-        ? 'The listener is busy right now.'
-        : 'The listener could not be reached.'
+    // "Busy" stays distinct from "could not be reached": one is worth retrying by
+    // hand in a minute, the other is not.
+    err.clientMessage = busy
+      ? 'The listener is busy right now.'
+      : 'The listener could not be reached.'
     throw err
   }
 
-  const payload = await response.json()
+  let payload
+  try {
+    payload = await response.json()
+  } catch (cause) {
+    console.error('Gemini returned a 200 that was not JSON:', cause)
+    const err = new Error('unreadable response')
+    err.status = 502
+    err.clientMessage = 'The listener returned something unreadable.'
+    throw err
+  }
 
   const blocked = payload?.promptFeedback?.blockReason
   if (blocked) {
@@ -237,10 +311,10 @@ const str = (value) => (typeof value === 'string' ? value.trim() : '')
 
 // Resolves to the detection (enriched with taxon data) if it is real, or null if it is not.
 async function validate(detection) {
-  if (!detection.scientificName) {
-    // Rain is not in iNaturalist, and neither is an unidentified rustle.
-    return UNCHECKED_CATEGORIES.has(detection.category) ? detection : null
-  }
+  // Nothing to check and nothing that could have been invented: rain is not in
+  // iNaturalist, and neither is "an unseen bird". The point of this step is to
+  // stop a fabricated binomial reaching the screen, and an empty name is not one.
+  if (!detection.scientificName) return detection
 
   const query = encodeURIComponent(detection.scientificName)
   const url = `${INAT_URL}?q=${query}&rank=species,subspecies&per_page=5`
@@ -342,6 +416,8 @@ async function largerImage(title) {
 }
 
 // --- plumbing --------------------------------------------------------------
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = LOOKUP_TIMEOUT_MS) {
   const controller = new AbortController()
